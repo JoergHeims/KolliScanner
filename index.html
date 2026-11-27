@@ -163,6 +163,35 @@ async function addCode(raw,manual){
   beep(true);flash(true);setStatus('✓ Erfasst: '+code+'  ('+items.length+')','ok');
 }
 
+/* ---------- Licht ---------- */
+var hasTorch=false;
+function wait(ms){return new Promise(function(r){setTimeout(r,ms)})}
+function torchOf(t){try{var c=t.getCapabilities?t.getCapabilities():{};return !!c.torch}catch(e){return false}}
+function facingOf(t){try{var c=t.getCapabilities?t.getCapabilities():{};return (c.facingMode||[]).join(',')}catch(e){return ''}}
+// Manche Handys melden das Licht erst nach kurzer Zeit, andere nur an der Hauptkamera.
+async function findTorch(){
+  for(var i=0;i<4&&!hasTorch;i++){await wait(400);hasTorch=torchOf(track)}
+  if(hasTorch)return;
+  try{
+    var cur=track.getSettings?track.getSettings().deviceId:'';
+    var devs=(await navigator.mediaDevices.enumerateDevices()).filter(function(d){return d.kind==='videoinput'&&d.deviceId!==cur});
+    for(var j=0;j<devs.length&&!hasTorch;j++){
+      var s2=null;
+      try{
+        s2=await navigator.mediaDevices.getUserMedia({audio:false,video:{deviceId:{exact:devs[j].deviceId},width:{ideal:1920},height:{ideal:1080}}});
+        var t2=s2.getVideoTracks()[0];await wait(300);
+        if(torchOf(t2)&&facingOf(t2).indexOf('user')<0){
+          stream.getTracks().forEach(function(x){x.stop()});
+          stream=s2;track=t2;video.srcObject=s2;await video.play();
+          try{track.applyConstraints({advanced:[{focusMode:'continuous'}]})}catch(e){}
+          hasTorch=true;break;
+        }
+        s2.getTracks().forEach(function(x){x.stop()});
+      }catch(e){if(s2)s2.getTracks().forEach(function(x){x.stop()})}
+    }
+  }catch(e){}
+}
+
 /* ---------- Kamera ---------- */
 async function startCamera(){
   try{
@@ -172,7 +201,8 @@ async function startCamera(){
   track=stream.getVideoTracks()[0];
   try{var cap=track.getCapabilities?track.getCapabilities():{};
     if(cap.focusMode&&cap.focusMode.indexOf('continuous')>=0)track.applyConstraints({advanced:[{focusMode:'continuous'}]});
-    $('btnTorch').disabled=!cap.torch;}catch(e){}
+  }catch(e){}
+  $('btnTorch').disabled=false;findTorch();
   $('startBox').style.display='none';$('btnPause').disabled=false;
   if('BarcodeDetector' in window){
     try{
@@ -321,7 +351,13 @@ async function exportList(){
 /* ---------- Events ---------- */
 $('btnStart').addEventListener('click',startCamera);
 $('btnPause').addEventListener('click',function(){paused=!paused;this.textContent=paused?'Weiter':'Pause';setStatus(paused?'Pausiert.':'Scannen aktiv – Barcode ins Bild halten.')});
-$('btnTorch').addEventListener('click',function(){torchOn=!torchOn;try{track.applyConstraints({advanced:[{torch:torchOn}]})}catch(e){}this.textContent=torchOn?'Licht aus':'Licht'});
+$('btnTorch').addEventListener('click',async function(){
+  var btn=this;
+  if(!hasTorch)hasTorch=torchOf(track);
+  if(!hasTorch){setStatus('Licht wird von diesem Handy/Browser für Apps nicht freigegeben. Bitte Chrome aktuell halten oder Taschenlampe extern nutzen.','warn');return}
+  try{await track.applyConstraints({advanced:[{torch:!torchOn}]});torchOn=!torchOn;btn.textContent=torchOn?'Licht aus':'Licht'}
+  catch(e){setStatus('Licht konnte nicht geschaltet werden.','warn')}
+});
 $('btnUndo').addEventListener('click',async function(){
   if(!items.length)return;var last=items[items.length-1].code;
   if(await ask('Letzten Eintrag löschen?',last,[{label:'Abbrechen',value:false},{label:'Löschen',value:true,primary:true}])){items.pop();save();render();lastCode='';setStatus('Gelöscht: '+last,'warn')}
