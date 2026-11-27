@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="de" dir="ltr">
 <head>
-<meta charset="utf-8">
+<meta charset="utf-8"><meta name="MSRAI_Label_dbd012e0-e600-4c3e-83b7-7d3141c15efc_AI_Disclosure" content="Made with AI">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#0b3d6e">
@@ -18,9 +18,11 @@ body{display:flex;flex-direction:column}
 header{background:var(--brand);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
 header h1{font-size:18px;margin:0}
 .count{font-size:15px;background:rgba(255,255,255,.18);padding:4px 10px;border-radius:14px;white-space:nowrap}
-.cam{position:relative;background:#000;aspect-ratio:4/3;max-height:42vh;width:100%;overflow:hidden}
+.cam{position:relative;background:#000;height:50vh;width:100%;overflow:hidden}
 .cam video{width:100%;height:100%;object-fit:cover;display:block}
-.cam .frame{position:absolute;inset:18% 8%;border:3px solid rgba(255,255,255,.75);border-radius:10px;pointer-events:none}
+.cam .frame{position:absolute;top:6%;bottom:6%;left:30%;right:30%;border:3px solid rgba(255,255,255,.85);border-radius:10px;pointer-events:none;box-shadow:0 0 0 2000px rgba(0,0,0,.35)}
+.cam .line{position:absolute;top:8%;bottom:8%;left:50%;width:2px;margin-left:-1px;background:rgba(255,40,40,.85);pointer-events:none}
+.cam .prog{position:absolute;top:8px;inset-inline:0;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 2px #000}
 .cam .hint{position:absolute;inset-inline:0;bottom:6px;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 2px #000}
 .cam .start{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 .flash-ok{animation:fok .5s}.flash-err{animation:ferr .7s}
@@ -58,8 +60,8 @@ dialog .row button{flex:1}
 
 <div class="cam" id="cam">
   <video id="video" playsinline muted></video>
-  <div class="frame"></div>
-  <div class="hint">Barcode komplett ins Bild – Handy quer zum Strichcode halten</div>
+  <div class="frame"></div><div class="line"></div><div class="prog" id="prog"></div>
+  <div class="hint">Barcode hochkant komplett in den Rahmen – kurz ruhig halten</div>
   <div class="start" id="startBox"><button class="primary" id="btnStart">Kamera starten</button></div>
 </div>
 
@@ -94,6 +96,9 @@ var $=function(id){return document.getElementById(id)};
 var video=$('video'),statusEl=$('status'),listEl=$('list');
 var stream=null,track=null,detector=null,zx=null,running=false,paused=false,busy=false,torchOn=false;
 var lastCode='',lastTime=0;
+var CONFIRM=3;                           // gleiche Nummer muss 3x hintereinander gelesen werden
+var pend='',pendN=0,pendT=0,unclearT=0,frameNo=0;
+var work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true});
 
 function save(){localStorage.setItem(STORE,JSON.stringify(items))}
 function render(){
@@ -142,12 +147,12 @@ async function addCode(raw,manual){
   var code=String(raw||'').trim().toUpperCase().replace(/^\*|\*$/g,'');
   if(!code)return;
   var now=Date.now();
-  if(!manual&&code===lastCode&&now-lastTime<2500)return;   // gleicher Code noch im Bild
+  if(!manual&&code===lastCode&&now-lastTime<3000)return;   // gleicher Code noch im Bild
   lastCode=code;lastTime=now;
   if(items.some(function(x){return x.code===code})){
     beep(false);flash(false);setStatus('Bereits erfasst: '+code,'err');return;
   }
-  if(!PATTERN.test(code)){
+  if(manual&&!PATTERN.test(code)){
     busy=true;beep(false);
     var ok=await ask('Unbekanntes Format','"'+code+'" entspricht nicht dem Kollonummer-Format (z. B. 27006345-GP-010). Trotzdem übernehmen?',
       [{label:'Verwerfen',value:false},{label:'Übernehmen',value:true,primary:true}]);
@@ -161,7 +166,7 @@ async function addCode(raw,manual){
 /* ---------- Kamera ---------- */
 async function startCamera(){
   try{
-    stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
+    stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},advanced:[{focusMode:'continuous'}]}});
   }catch(e){setStatus('Kamera nicht verfügbar: '+(e.message||e.name)+'. Die App muss über https geöffnet werden und Kamerazugriff erhalten.','err');return}
   video.srcObject=stream;await video.play();
   track=stream.getVideoTracks()[0];
@@ -196,31 +201,59 @@ function loadZxing(){
     s.onerror=rej;document.head.appendChild(s);
   });
 }
-function zxDecode(){
-  var c=zx.canvas,w=video.videoWidth,h=video.videoHeight;if(!w)return null;
-  var sc=Math.min(1,1280/Math.max(w,h));c.width=w*sc;c.height=h*sc;
-  var ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(video,0,0,c.width,c.height);
+/* Ausschnitt des Rahmens aus dem Kamerabild holen und um 90 Grad drehen,
+   damit der hochkant aufgeklebte Barcode waagerecht ausgewertet wird. */
+function grabFrame(rotate){
+  var vw=video.videoWidth,vh=video.videoHeight;if(!vw)return null;
+  var cam=$('cam').getBoundingClientRect(),fr=document.querySelector('.cam .frame').getBoundingClientRect();
+  var sc=Math.max(cam.width/vw,cam.height/vh),ox=(vw*sc-cam.width)/2,oy=(vh*sc-cam.height)/2;
+  var mx=fr.width*0.35,my=fr.height*0.04;                       // etwas Rand fuer die Ruhezonen
+  var sx=Math.max(0,(fr.left-cam.left-mx+ox)/sc),sy=Math.max(0,(fr.top-cam.top-my+oy)/sc);
+  var sw=Math.min(vw-sx,(fr.width+2*mx)/sc),sh=Math.min(vh-sy,(fr.height+2*my)/sc);
+  var k=Math.min(1,1400/Math.max(sw,sh)),w=Math.round(sw*k),h=Math.round(sh*k);
+  wctx.setTransform(1,0,0,1,0,0);
+  if(rotate){work.width=h;work.height=w;wctx.translate(h,0);wctx.rotate(Math.PI/2)}
+  else{work.width=w;work.height=h}
+  wctx.drawImage(video,sx,sy,sw,sh,0,0,w,h);
+  return work;
+}
+function zxDecode(canvas){
   var Z=zx.Z;
   try{
-    var src=new Z.HTMLCanvasElementLuminanceSource(c);
-    var bmp=new Z.BinaryBitmap(new Z.HybridBinarizer(src));
-    try{return zx.reader.decodeWithState(bmp).getText()}
-    catch(e){ bmp=new Z.BinaryBitmap(new Z.HybridBinarizer(src.rotateCounterClockwise())); return zx.reader.decodeWithState(bmp).getText()}
+    var src=new Z.HTMLCanvasElementLuminanceSource(canvas);
+    return zx.reader.decodeWithState(new Z.BinaryBitmap(new Z.HybridBinarizer(src))).getText();
   }catch(e){return null}
+}
+function clean(raw){return String(raw||'').trim().toUpperCase().replace(/^\*|\*$/g,'')}
+async function onRead(raw){
+  var code=clean(raw),now=Date.now();
+  if(!code)return;
+  if(!PATTERN.test(code)){                                     // Fehllesung: still verwerfen
+    if(now-unclearT>1500){unclearT=now;$('prog').textContent='Code unklar – ruhig halten / Abstand ändern'}
+    pend='';pendN=0;return;
+  }
+  if(code===pend&&now-pendT<1500){pendN++}else{pend=code;pendN=1}
+  pendT=now;
+  $('prog').textContent=pendN<CONFIRM?('Lese '+code+' … '+pendN+'/'+CONFIRM):'';
+  if(pendN>=CONFIRM){pendN=0;pend='';await addCode(code,false)}
+}
+async function detectOn(src){
+  if(detector){var r=await detector.detect(src);return r.map(function(x){return x.rawValue})}
+  if(zx){var t=zxDecode(src);return t?[t]:[]}
+  return [];
 }
 async function loop(){
   if(!running)return;
   if(!paused&&!busy&&video.readyState>=2){
     try{
-      if(detector){
-        var codes=await detector.detect(video);
-        for(var i=0;i<codes.length;i++){await addCode(codes[i].rawValue,false)}
-      }else if(zx){
-        var t=zxDecode();if(t)await addCode(t,false);
-      }
+      frameNo++;
+      var vals=await detectOn(grabFrame(true));                // hochkant (Normalfall)
+      if(!vals.length&&frameNo%3===0)vals=await detectOn(grabFrame(false)); // falls Etikett mal quer klebt
+      if(vals.length)await onRead(vals[0]);
+      else if(Date.now()-pendT>1500){pend='';pendN=0;if(Date.now()-unclearT>1500)$('prog').textContent=''}
     }catch(e){}
   }
-  setTimeout(loop,detector?120:250);
+  setTimeout(loop,detector?90:200);
 }
 
 /* ---------- XLSX (ohne Fremdbibliothek) ---------- */
