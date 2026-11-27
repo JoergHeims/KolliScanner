@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="de" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b3d6e">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Kolli-Scanner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<style>
+:root{--bg:#f2f4f7;--card:#fff;--fg:#14202b;--muted:#5b6b7a;--brand:#0b3d6e;--ok:#1e8e3e;--err:#c5221f;--warn:#b06000;--line:#d6dce3}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1720;--card:#18232f;--fg:#e8edf2;--muted:#9aa9b8;--line:#2a3a4a}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column}
+header{background:var(--brand);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+header h1{font-size:18px;margin:0}
+.count{font-size:15px;background:rgba(255,255,255,.18);padding:4px 10px;border-radius:14px;white-space:nowrap}
+.cam{position:relative;background:#000;aspect-ratio:4/3;max-height:42vh;width:100%;overflow:hidden}
+.cam video{width:100%;height:100%;object-fit:cover;display:block}
+.cam .frame{position:absolute;inset:18% 8%;border:3px solid rgba(255,255,255,.75);border-radius:10px;pointer-events:none}
+.cam .hint{position:absolute;inset-inline:0;bottom:6px;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 2px #000}
+.cam .start{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.flash-ok{animation:fok .5s}.flash-err{animation:ferr .7s}
+@keyframes fok{0%{box-shadow:inset 0 0 0 12px var(--ok)}100%{box-shadow:inset 0 0 0 0 transparent}}
+@keyframes ferr{0%{box-shadow:inset 0 0 0 12px var(--err)}100%{box-shadow:inset 0 0 0 0 transparent}}
+.tools{display:flex;gap:8px;padding:8px 10px}
+.tools button{flex:1}
+button{font:inherit;font-size:15px;border:0;border-radius:10px;padding:12px 10px;background:var(--card);color:var(--fg);border:1px solid var(--line)}
+button.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+button.done{background:var(--ok);color:#fff;border:0;font-size:20px;font-weight:700;padding:16px;letter-spacing:1px}
+button:disabled{opacity:.45}
+.status{margin:0 10px;padding:10px 12px;border-radius:10px;font-weight:600;min-height:44px;background:var(--card);border:1px solid var(--line)}
+.status.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+.status.err{background:var(--err);color:#fff;border-color:var(--err)}
+.status.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
+.manual{display:flex;gap:8px;padding:8px 10px}
+.manual input{flex:1;font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);text-transform:uppercase;min-width:0}
+main{flex:1;overflow:auto;padding:0 10px}
+ol{list-style:none;margin:0;padding:0}
+li{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:6px 0}
+li .n{color:var(--muted);font-size:13px;min-width:30px;text-align:end}
+li .code{flex:1;font-family:ui-monospace,Consolas,monospace;font-size:17px;font-weight:600}
+li button{padding:6px 10px;font-size:13px;color:var(--err)}
+.empty{color:var(--muted);text-align:center;padding:20px}
+footer{padding:10px;border-top:1px solid var(--line);background:var(--bg)}
+dialog{border:0;border-radius:14px;padding:18px;max-width:92vw;background:var(--card);color:var(--fg)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+dialog h2{margin:0 0 8px;font-size:19px}
+dialog .row{display:flex;gap:8px;margin-top:14px}
+dialog .row button{flex:1}
+</style>
+</head>
+<body>
+<header><h1>Kolli-Scanner</h1><span class="count" id="count">0 Kolli</span></header>
+
+<div class="cam" id="cam">
+  <video id="video" playsinline muted></video>
+  <div class="frame"></div>
+  <div class="hint">Barcode komplett ins Bild – Handy quer zum Strichcode halten</div>
+  <div class="start" id="startBox"><button class="primary" id="btnStart">Kamera starten</button></div>
+</div>
+
+<div class="tools">
+  <button id="btnPause" disabled>Pause</button>
+  <button id="btnTorch" disabled>Licht</button>
+  <button id="btnUndo" disabled>Letzten löschen</button>
+</div>
+
+<div class="status" id="status">Bereit. Kamera starten und Kolli scannen.</div>
+
+<form class="manual" id="manualForm" autocomplete="off">
+  <input id="manualInput" placeholder="Kollonummer manuell eingeben" inputmode="text">
+  <button class="primary" type="submit">+</button>
+</form>
+
+<main><ol id="list"></ol><div class="empty" id="empty">Noch keine Kolli erfasst.</div></main>
+
+<footer><button class="done" id="btnDone" style="width:100%">FERTIG</button></footer>
+
+<dialog id="dlg"><h2 id="dlgTitle"></h2><div id="dlgText"></div><div class="row" id="dlgButtons"></div></dialog>
+
+<script>
+(function(){
+'use strict';
+var STORE='kolliScanner.items.v1';
+var PATTERN=/^\d{8}-GP-\d{3}$/;           // Format laut Etikett, z. B. 27006345-GP-010
+var items=[];                            // [{code, ts}]
+try{items=JSON.parse(localStorage.getItem(STORE)||'[]')}catch(e){items=[]}
+
+var $=function(id){return document.getElementById(id)};
+var video=$('video'),statusEl=$('status'),listEl=$('list');
+var stream=null,track=null,detector=null,zx=null,running=false,paused=false,busy=false,torchOn=false;
+var lastCode='',lastTime=0;
+
+function save(){localStorage.setItem(STORE,JSON.stringify(items))}
+function render(){
+  listEl.innerHTML='';
+  for(var i=items.length-1;i>=0;i--){
+    var li=document.createElement('li');
+    var n=document.createElement('span');n.className='n';n.textContent=(i+1)+'.';
+    var c=document.createElement('span');c.className='code';c.textContent=items[i].code;
+    var b=document.createElement('button');b.textContent='Löschen';b.dataset.idx=i;
+    li.appendChild(n);li.appendChild(c);li.appendChild(b);listEl.appendChild(li);
+  }
+  $('empty').style.display=items.length?'none':'block';
+  $('count').textContent=items.length+(items.length===1?' Kollo':' Kolli');
+  $('btnUndo').disabled=!items.length;
+}
+function setStatus(t,cls){statusEl.textContent=t;statusEl.className='status'+(cls?' '+cls:'')}
+function flash(ok){var c=$('cam');c.classList.remove('flash-ok','flash-err');void c.offsetWidth;c.classList.add(ok?'flash-ok':'flash-err')}
+
+var actx=null;
+function beep(ok){
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    var o=actx.createOscillator(),g=actx.createGain();
+    o.frequency.value=ok?1800:300;o.type=ok?'sine':'square';
+    g.gain.value=0.25;o.connect(g);g.connect(actx.destination);
+    o.start();o.stop(actx.currentTime+(ok?0.12:0.45));
+  }catch(e){}
+  if(navigator.vibrate)navigator.vibrate(ok?80:[200,100,200]);
+}
+
+/* ---------- Dialog ---------- */
+function ask(title,text,buttons){
+  return new Promise(function(res){
+    var d=$('dlg');$('dlgTitle').textContent=title;$('dlgText').textContent=text;
+    var row=$('dlgButtons');row.innerHTML='';
+    buttons.forEach(function(b){
+      var el=document.createElement('button');el.textContent=b.label;if(b.primary)el.className='primary';
+      el.addEventListener('click',function(){d.close();res(b.value)});row.appendChild(el);
+    });
+    d.showModal();
+  });
+}
+
+/* ---------- Erfassen ---------- */
+async function addCode(raw,manual){
+  var code=String(raw||'').trim().toUpperCase().replace(/^\*|\*$/g,'');
+  if(!code)return;
+  var now=Date.now();
+  if(!manual&&code===lastCode&&now-lastTime<2500)return;   // gleicher Code noch im Bild
+  lastCode=code;lastTime=now;
+  if(items.some(function(x){return x.code===code})){
+    beep(false);flash(false);setStatus('Bereits erfasst: '+code,'err');return;
+  }
+  if(!PATTERN.test(code)){
+    busy=true;beep(false);
+    var ok=await ask('Unbekanntes Format','"'+code+'" entspricht nicht dem Kollonummer-Format (z. B. 27006345-GP-010). Trotzdem übernehmen?',
+      [{label:'Verwerfen',value:false},{label:'Übernehmen',value:true,primary:true}]);
+    busy=false;lastTime=Date.now();
+    if(!ok){setStatus('Verworfen: '+code,'warn');return}
+  }
+  items.push({code:code,ts:new Date().toISOString()});save();render();
+  beep(true);flash(true);setStatus('✓ Erfasst: '+code+'  ('+items.length+')','ok');
+}
+
+/* ---------- Kamera ---------- */
+async function startCamera(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
+  }catch(e){setStatus('Kamera nicht verfügbar: '+(e.message||e.name)+'. Die App muss über https geöffnet werden und Kamerazugriff erhalten.','err');return}
+  video.srcObject=stream;await video.play();
+  track=stream.getVideoTracks()[0];
+  try{var cap=track.getCapabilities?track.getCapabilities():{};
+    if(cap.focusMode&&cap.focusMode.indexOf('continuous')>=0)track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+    $('btnTorch').disabled=!cap.torch;}catch(e){}
+  $('startBox').style.display='none';$('btnPause').disabled=false;
+  if('BarcodeDetector' in window){
+    try{
+      var sup=await BarcodeDetector.getSupportedFormats();
+      var want=['code_39','code_128'].filter(function(f){return sup.indexOf(f)>=0});
+      if(want.length)detector=new BarcodeDetector({formats:want});
+    }catch(e){detector=null}
+  }
+  if(!detector){
+    setStatus('Lade Ersatz-Scanner …');
+    try{await loadZxing()}catch(e){setStatus('Scanner konnte nicht geladen werden. Bitte Chrome verwenden oder manuell eingeben.','err');return}
+  }
+  running=true;setStatus('Scannen aktiv – Barcode ins Bild halten.');loop();
+}
+function loadZxing(){
+  return new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload=function(){
+      var Z=window.ZXing,h=new Map();
+      h.set(Z.DecodeHintType.POSSIBLE_FORMATS,[Z.BarcodeFormat.CODE_39,Z.BarcodeFormat.CODE_128]);
+      h.set(Z.DecodeHintType.TRY_HARDER,true);
+      zx={Z:Z,reader:new Z.MultiFormatReader(),hints:h,canvas:document.createElement('canvas')};
+      zx.reader.setHints(h);res();
+    };
+    s.onerror=rej;document.head.appendChild(s);
+  });
+}
+function zxDecode(){
+  var c=zx.canvas,w=video.videoWidth,h=video.videoHeight;if(!w)return null;
+  var sc=Math.min(1,1280/Math.max(w,h));c.width=w*sc;c.height=h*sc;
+  var ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(video,0,0,c.width,c.height);
+  var Z=zx.Z;
+  try{
+    var src=new Z.HTMLCanvasElementLuminanceSource(c);
+    var bmp=new Z.BinaryBitmap(new Z.HybridBinarizer(src));
+    try{return zx.reader.decodeWithState(bmp).getText()}
+    catch(e){ bmp=new Z.BinaryBitmap(new Z.HybridBinarizer(src.rotateCounterClockwise())); return zx.reader.decodeWithState(bmp).getText()}
+  }catch(e){return null}
+}
+async function loop(){
+  if(!running)return;
+  if(!paused&&!busy&&video.readyState>=2){
+    try{
+      if(detector){
+        var codes=await detector.detect(video);
+        for(var i=0;i<codes.length;i++){await addCode(codes[i].rawValue,false)}
+      }else if(zx){
+        var t=zxDecode();if(t)await addCode(t,false);
+      }
+    }catch(e){}
+  }
+  setTimeout(loop,detector?120:250);
+}
+
+/* ---------- XLSX (ohne Fremdbibliothek) ---------- */
+var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function crc32(b){var c=0xFFFFFFFF;for(var i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
+function zip(files){
+  var enc=new TextEncoder(),parts=[],central=[],off=0;
+  files.forEach(function(f){
+    var name=enc.encode(f.name),data=enc.encode(f.data),crc=crc32(data);
+    var h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(8,0,true);
+    h.setUint16(10,0,true);h.setUint16(12,0x21,true);h.setUint32(14,crc,true);
+    h.setUint32(18,data.length,true);h.setUint32(22,data.length,true);h.setUint16(26,name.length,true);h.setUint16(28,0,true);
+    parts.push(new Uint8Array(h.buffer),name,data);
+    var c=new DataView(new ArrayBuffer(46));
+    c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(10,0,true);
+    c.setUint16(12,0,true);c.setUint16(14,0x21,true);c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);
+    c.setUint16(28,name.length,true);c.setUint16(30,0,true);c.setUint16(32,0,true);c.setUint16(34,0,true);c.setUint16(36,0,true);
+    c.setUint32(38,0,true);c.setUint32(42,off,true);
+    central.push(new Uint8Array(c.buffer),name);
+    off+=30+name.length+data.length;
+  });
+  var csize=central.reduce(function(s,a){return s+a.length},0);
+  var e=new DataView(new ArrayBuffer(22));
+  e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);
+  e.setUint32(12,csize,true);e.setUint32(16,off,true);
+  return new Blob(parts.concat(central,[new Uint8Array(e.buffer)]),{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function buildXlsx(codes){
+  var rows='<row r="1"><c r="A1" t="inlineStr" s="1"><is><t>Kollonummer</t></is></c></row>';
+  codes.forEach(function(c,i){var r=i+2;rows+='<row r="'+r+'"><c r="A'+r+'" t="inlineStr"><is><t>'+esc(c)+'</t></is></c></row>'});
+  var X='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  return zip([
+    {name:'[Content_Types].xml',data:X+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'},
+    {name:'_rels/.rels',data:X+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+    {name:'xl/workbook.xml',data:X+'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Kolli" sheetId="1" r:id="rId1"/></sheets></workbook>'},
+    {name:'xl/_rels/workbook.xml.rels',data:X+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'},
+    {name:'xl/styles.xml',data:X+'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="49" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'},
+    {name:'xl/worksheets/sheet1.xml',data:X+'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData>'+rows+'</sheetData><autoFilter ref="A1:A'+(codes.length+1)+'"/></worksheet>'}
+  ]);
+}
+function stamp(){var d=new Date(),p=function(n){return String(n).padStart(2,'0')};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())}
+
+async function exportList(){
+  var name='Kolli_Bestand_'+stamp()+'.xlsx';
+  var blob=buildXlsx(items.map(function(x){return x.code}));
+  var file=null;try{file=new File([blob],name,{type:blob.type})}catch(e){}
+  // 1) Immer lokal speichern (Ordner "Downloads")
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},4000);
+  // 2) Optional teilen (Mail, Teams, OneDrive …)
+  var share=file&&navigator.canShare&&navigator.canShare({files:[file]});
+  var choice=await ask('Liste exportiert',name+' wurde im Ordner "Downloads" gespeichert ('+items.length+' Kolli).',
+    (share?[{label:'Teilen …',value:'share'}]:[]).concat([{label:'Neue Liste starten',value:'new'},{label:'Liste behalten',value:'keep',primary:true}]));
+  if(choice==='share'){
+    try{await navigator.share({files:[file],title:name})}catch(e){}
+    choice=await ask('Liste leeren?','Soll die erfasste Liste jetzt geleert werden, um eine neue Zählung zu beginnen?',
+      [{label:'Behalten',value:'keep'},{label:'Neue Liste',value:'new',primary:true}]);
+  }
+  if(choice==='new'){items=[];save();render();lastCode='';setStatus('Neue Liste gestartet.')}
+  else setStatus('Export abgeschlossen: '+name,'ok');
+}
+
+/* ---------- Events ---------- */
+$('btnStart').addEventListener('click',startCamera);
+$('btnPause').addEventListener('click',function(){paused=!paused;this.textContent=paused?'Weiter':'Pause';setStatus(paused?'Pausiert.':'Scannen aktiv – Barcode ins Bild halten.')});
+$('btnTorch').addEventListener('click',function(){torchOn=!torchOn;try{track.applyConstraints({advanced:[{torch:torchOn}]})}catch(e){}this.textContent=torchOn?'Licht aus':'Licht'});
+$('btnUndo').addEventListener('click',async function(){
+  if(!items.length)return;var last=items[items.length-1].code;
+  if(await ask('Letzten Eintrag löschen?',last,[{label:'Abbrechen',value:false},{label:'Löschen',value:true,primary:true}])){items.pop();save();render();lastCode='';setStatus('Gelöscht: '+last,'warn')}
+});
+listEl.addEventListener('click',async function(e){
+  var b=e.target.closest('button');if(!b)return;var i=+b.dataset.idx,c=items[i].code;
+  if(await ask('Eintrag löschen?',c,[{label:'Abbrechen',value:false},{label:'Löschen',value:true,primary:true}])){items.splice(i,1);save();render();lastCode='';setStatus('Gelöscht: '+c,'warn')}
+});
+$('manualForm').addEventListener('submit',function(e){e.preventDefault();var v=$('manualInput').value;$('manualInput').value='';addCode(v,true)});
+$('btnDone').addEventListener('click',async function(){
+  if(!items.length){setStatus('Die Liste ist leer – nichts zu exportieren.','warn');return}
+  var ok=await ask('Erfassung abschließen?','Es wurden '+items.length+' Kolli erfasst. Liste jetzt als Excel-Datei exportieren?',
+    [{label:'Zurück',value:false},{label:'FERTIG – Exportieren',value:true,primary:true}]);
+  if(ok)exportList();
+});
+window.addEventListener('beforeunload',save);
+if('serviceWorker' in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('sw.js').catch(function(){})}
+render();
+if(items.length)setStatus(items.length+' Kolli aus der letzten Sitzung wiederhergestellt.');
+})();
+</script>
+</body>
+</html>
