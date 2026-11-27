@@ -29,7 +29,9 @@ header h1{font-size:18px;margin:0}
 @keyframes fok{0%{box-shadow:inset 0 0 0 12px var(--ok)}100%{box-shadow:inset 0 0 0 0 transparent}}
 @keyframes ferr{0%{box-shadow:inset 0 0 0 12px var(--err)}100%{box-shadow:inset 0 0 0 0 transparent}}
 .tools{display:flex;gap:8px;padding:8px 10px}
-.tools button{flex:1}
+.tools button{flex:1;padding:12px 4px;font-size:14px}
+button.danger{color:var(--err);border-color:var(--err)}
+dialog button.dangerfill{background:var(--err);color:#fff;border-color:var(--err)}
 button{font:inherit;font-size:15px;border:0;border-radius:10px;padding:12px 10px;background:var(--card);color:var(--fg);border:1px solid var(--line)}
 button.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
 button.done{background:var(--ok);color:#fff;border:0;font-size:20px;font-weight:700;padding:16px;letter-spacing:1px}
@@ -69,6 +71,7 @@ dialog .row button{flex:1}
   <button id="btnPause" disabled>Pause</button>
   <button id="btnTorch" disabled>Licht</button>
   <button id="btnUndo" disabled>Letzten löschen</button>
+  <button id="btnClear" class="danger" disabled>Alle löschen</button>
 </div>
 
 <div class="status" id="status">Bereit. Kamera starten und Kolli scannen.</div>
@@ -113,6 +116,7 @@ function render(){
   $('empty').style.display=items.length?'none':'block';
   $('count').textContent=items.length+(items.length===1?' Kollo':' Kolli');
   $('btnUndo').disabled=!items.length;
+  $('btnClear').disabled=!items.length;
 }
 function setStatus(t,cls){statusEl.textContent=t;statusEl.className='status'+(cls?' '+cls:'')}
 function flash(ok){var c=$('cam');c.classList.remove('flash-ok','flash-err');void c.offsetWidth;c.classList.add(ok?'flash-ok':'flash-err')}
@@ -136,9 +140,11 @@ function ask(title,text,buttons){
     var row=$('dlgButtons');row.innerHTML='';
     buttons.forEach(function(b){
       var el=document.createElement('button');el.textContent=b.label;if(b.primary)el.className='primary';
+      if(b.danger)el.className='dangerfill';
       el.addEventListener('click',function(){d.close();res(b.value)});row.appendChild(el);
     });
     d.showModal();
+    var f=row.querySelector('button');if(f)f.focus();
   });
 }
 
@@ -365,6 +371,15 @@ $('btnUndo').addEventListener('click',async function(){
 listEl.addEventListener('click',async function(e){
   var b=e.target.closest('button');if(!b)return;var i=+b.dataset.idx,c=items[i].code;
   if(await ask('Eintrag löschen?',c,[{label:'Abbrechen',value:false},{label:'Löschen',value:true,primary:true}])){items.splice(i,1);save();render();lastCode='';setStatus('Gelöscht: '+c,'warn')}
+});
+$('btnClear').addEventListener('click',async function(){
+  if(!items.length)return;
+  var n=items.length;
+  var ok=await ask('Wirklich alle löschen?','Alle '+n+' erfassten Kolli werden unwiderruflich gelöscht. Nicht exportierte Scans gehen verloren.',
+    [{label:'Abbrechen',value:false},{label:'Ja, alle löschen',value:true,danger:true}]);
+  if(!ok){setStatus('Löschen abgebrochen.');return}
+  items=[];save();render();lastCode='';pend='';pendN=0;
+  setStatus('Alle '+n+' Kolli gelöscht. Neue Liste gestartet.','warn');
 });
 $('manualForm').addEventListener('submit',function(e){e.preventDefault();var v=$('manualInput').value;$('manualInput').value='';addCode(v,true)});
 $('btnDone').addEventListener('click',async function(){
